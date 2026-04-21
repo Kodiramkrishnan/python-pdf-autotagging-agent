@@ -72,7 +72,7 @@ Explicit title override:
 python universal_pdf_tagging_agent.py "input.pdf" "output_tagged.pdf" --title "My Custom Title"
 ```
 
-## Batch Processing (Latest)
+## Batch Processing
 
 Batch mode processes all `.pdf` files inside an input directory and writes outputs into per-file subfolders.
 
