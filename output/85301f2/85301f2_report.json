@@ -1,0 +1,20 @@
+{
+  "input_file": "C:\\Users\\KRISHNA\\Documents\\AI-AGent\\input\\85301f2.pdf",
+  "output_file": "C:\\Users\\KRISHNA\\Documents\\AI-AGent\\output\\85301f2\\85301f2.pdf",
+  "status": "success",
+  "started_at_utc": "2026-04-22T06:31:29.681878+00:00",
+  "options": {
+    "lang": "en-US",
+    "title": null,
+    "enhance_contrast": true,
+    "force_pac_checkpoints": true,
+    "force_pac_font_check": true,
+    "force_pac_font_matrix": false,
+    "force_pac_alt_checkpoints": true
+  },
+  "finished_at_utc": "2026-04-22T06:33:58.922093+00:00",
+  "duration_seconds": 149.24,
+  "output_size_bytes": 916988,
+  "output_pages": 5,
+  "output_title": "\u2018Backward\u2019 Market Research"
+}

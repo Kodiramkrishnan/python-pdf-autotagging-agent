@@ -1,0 +1,20 @@
+{
+  "input_file": "C:\\Users\\KRISHNA\\Documents\\AI-AGent\\input\\F1501Af2.pdf",
+  "output_file": "C:\\Users\\KRISHNA\\Documents\\AI-AGent\\output\\F1501Af2\\F1501Af2.pdf",
+  "status": "success",
+  "started_at_utc": "2026-04-22T06:40:14.708500+00:00",
+  "options": {
+    "lang": "en-US",
+    "title": null,
+    "enhance_contrast": true,
+    "force_pac_checkpoints": true,
+    "force_pac_font_check": true,
+    "force_pac_font_matrix": false,
+    "force_pac_alt_checkpoints": true
+  },
+  "finished_at_utc": "2026-04-22T06:42:22.244474+00:00",
+  "duration_seconds": 127.536,
+  "output_size_bytes": 877752,
+  "output_pages": 5,
+  "output_title": "F1501Af2"
+}

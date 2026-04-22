@@ -1,0 +1,20 @@
+{
+  "input_file": "C:\\Users\\KRISHNA\\Documents\\AI-AGent\\input\\F1505Af2.pdf",
+  "output_file": "C:\\Users\\KRISHNA\\Documents\\AI-AGent\\output\\F1505Af2\\F1505Af2.pdf",
+  "status": "success",
+  "started_at_utc": "2026-04-22T06:46:18.249778+00:00",
+  "options": {
+    "lang": "en-US",
+    "title": null,
+    "enhance_contrast": true,
+    "force_pac_checkpoints": true,
+    "force_pac_font_check": true,
+    "force_pac_font_matrix": false,
+    "force_pac_alt_checkpoints": true
+  },
+  "finished_at_utc": "2026-04-22T06:47:38.858158+00:00",
+  "duration_seconds": 80.608,
+  "output_size_bytes": 770250,
+  "output_pages": 5,
+  "output_title": "Tesla\u2019s Not as Disruptive as You Might Think"
+}

@@ -62,6 +62,148 @@ def has_meaningful_text(value: str) -> bool:
     return bool(re.search(r"\S", sanitized))
 
 
+def font_has_unicode_mapping(font_obj: Optional[pikepdf.Object]) -> bool:
+    if not isinstance(font_obj, pikepdf.Dictionary):
+        return False
+
+    if Name.ToUnicode in font_obj:
+        return True
+
+    subtype = font_obj.get(Name.Subtype)
+    encoding = font_obj.get(Name.Encoding)
+    if subtype == Name.Type1 and encoding in {
+        Name.WinAnsiEncoding,
+        Name.MacRomanEncoding,
+        Name.StandardEncoding,
+    }:
+        return True
+
+    descendant = font_obj.get(Name.DescendantFonts)
+    if isinstance(descendant, pikepdf.Array) and len(descendant) > 0:
+        first = descendant[0]
+        if isinstance(first, pikepdf.Dictionary) and Name.ToUnicode in first:
+            return True
+
+    return False
+
+
+def font_is_embedded(font_obj: Optional[pikepdf.Object]) -> bool:
+    if not isinstance(font_obj, pikepdf.Dictionary):
+        return False
+    fd = font_obj.get(Name.FontDescriptor)
+    if isinstance(fd, pikepdf.Dictionary):
+        if Name.FontFile in fd or Name.FontFile2 in fd or Name.FontFile3 in fd:
+            return True
+
+    descendant = font_obj.get(Name.DescendantFonts)
+    if isinstance(descendant, pikepdf.Array) and len(descendant) > 0:
+        first = descendant[0]
+        if isinstance(first, pikepdf.Dictionary):
+            fd2 = first.get(Name.FontDescriptor)
+            if isinstance(fd2, pikepdf.Dictionary):
+                if Name.FontFile in fd2 or Name.FontFile2 in fd2 or Name.FontFile3 in fd2:
+                    return True
+    return False
+
+
+def build_standard_winansi_font(pdf: pikepdf.Pdf) -> pikepdf.Object:
+    # Base-14 Helvetica with WinAnsi encoding provides predictable
+    # char->Unicode mapping for the ASCII-safe text we inject.
+    return pdf.make_indirect(
+        pikepdf.Dictionary(
+            Type=Name.Font,
+            Subtype=Name.Type1,
+            BaseFont=Name.Helvetica,
+            Encoding=Name.WinAnsiEncoding,
+        )
+    )
+
+
+def build_embedded_fallback_font(pdf: pikepdf.Pdf) -> Optional[pikepdf.Object]:
+    try:
+        import fitz  # PyMuPDF
+
+        candidate_paths = [
+            Path(r"C:\Windows\Fonts\arial.ttf"),
+            Path(r"C:\Windows\Fonts\segoeui.ttf"),
+        ]
+        for path in candidate_paths:
+            if not path.exists():
+                continue
+            tmp_pdf = Path(tempfile.gettempdir()) / f"ua_embed_font_{int(time.time()*1000)}.pdf"
+            try:
+                doc = fitz.open()
+                page = doc.new_page(width=595, height=842)
+                page.insert_font(fontname="FUA", fontfile=path.as_posix())
+                page.insert_text(
+                    fitz.Point(72, 72),
+                    "ACCESSIBILITY FONT PROBE",
+                    fontname="FUA",
+                    fontsize=12,
+                )
+                doc.save(tmp_pdf.as_posix())
+                doc.close()
+
+                with pikepdf.open(tmp_pdf.as_posix()) as donor:
+                    p0 = donor.pages[0].obj
+                    resources = p0.get(Name.Resources, pikepdf.Dictionary())
+                    fonts = resources.get(Name.Font, pikepdf.Dictionary())
+                    if not isinstance(fonts, pikepdf.Dictionary):
+                        continue
+                    for _, font_obj in fonts.items():
+                        if not isinstance(font_obj, pikepdf.Dictionary):
+                            continue
+                        if font_is_embedded(font_obj) and font_has_unicode_mapping(font_obj):
+                            return pdf.copy_foreign(font_obj)
+            finally:
+                try:
+                    if tmp_pdf.exists():
+                        tmp_pdf.unlink()
+                except Exception:
+                    pass
+    except Exception as exc:
+        LOGGER.warning("Unable to build embedded fallback font: %s", exc)
+    return None
+
+
+def normalize_cid_to_gid_map(font_obj: Optional[pikepdf.Object]) -> Optional[pikepdf.Object]:
+    if not isinstance(font_obj, pikepdf.Dictionary):
+        return font_obj
+    if font_obj.get(Name.Subtype) != Name.Type0:
+        return font_obj
+    descendant = font_obj.get(Name.DescendantFonts)
+    if not (isinstance(descendant, pikepdf.Array) and len(descendant) > 0):
+        return font_obj
+    cid_font = descendant[0]
+    if not isinstance(cid_font, pikepdf.Dictionary):
+        return font_obj
+    if cid_font.get(Name.Subtype) != Name.CIDFontType2:
+        return font_obj
+    # PAC can flag missing/invalid CIDToGIDMap in CIDFontType2 descendants.
+    cid_font[Name("/CIDToGIDMap")] = Name.Identity
+    return font_obj
+
+
+def pick_injected_text_font(
+    pdf: pikepdf.Pdf, preferred_font: Optional[pikepdf.Object]
+) -> pikepdf.Object:
+    # Do not prefer donor subset fonts for injected text.
+    # Even when they advertise ToUnicode, PAC can still flag mapping issues
+    # for synthetic strings rendered with partial glyph subsets.
+    fallback_embedded = build_embedded_fallback_font(pdf)
+    if fallback_embedded is not None:
+        return normalize_cid_to_gid_map(fallback_embedded) or fallback_embedded
+    if font_is_embedded(preferred_font) and font_has_unicode_mapping(preferred_font):
+        LOGGER.warning(
+            "Using donor embedded font as fallback for injected text; PAC mapping may vary by source subset."
+        )
+        return normalize_cid_to_gid_map(preferred_font) or preferred_font
+    LOGGER.warning(
+        "Embedded Unicode-safe font unavailable; falling back to non-embedded standard font."
+    )
+    return build_standard_winansi_font(pdf)
+
+
 # Maps model labels to official PDF/UA tag names.
 mapping_config: Dict[str, str] = {
     "title": "H1",
@@ -671,9 +813,7 @@ class StructureTreeWriter:
         resources = page_obj.get(Name.Resources, pikepdf.Dictionary())
         fonts = resources.get(Name.Font, pikepdf.Dictionary())
         if Name("/Fh") not in fonts:
-            if heading_font is None:
-                return False
-            fonts[Name("/Fh")] = heading_font
+            fonts[Name("/Fh")] = heading_font or build_standard_winansi_font(pdf)
         resources[Name.Font] = fonts
         page_obj[Name.Resources] = resources
 
@@ -713,12 +853,13 @@ class StructureTreeWriter:
         page_extent: Tuple[float, float],
         heading_font: Optional[pikepdf.Object],
     ) -> Optional[pikepdf.Object]:
-        if not items or heading_font is None:
+        if not items:
             return None
 
         resources = page_obj.get(Name.Resources, pikepdf.Dictionary())
         fonts = resources.get(Name.Font, pikepdf.Dictionary())
-        fonts[Name("/Fh")] = heading_font
+        text_font = heading_font or build_standard_winansi_font(pdf)
+        fonts[Name("/Fh")] = text_font
         resources[Name.Font] = fonts
         page_obj[Name.Resources] = resources
 
@@ -1254,8 +1395,9 @@ class PacCheckpointForcer:
         resources = page_obj.get(Name.Resources, pikepdf.Dictionary())
         fonts = resources.get(Name.Font, pikepdf.Dictionary())
         probe_fonts: List[Tuple[str, pikepdf.Object, str]] = []
-        if embedded_font is not None and not force_font_matrix:
-            probe_fonts.append(("Fp0", embedded_font, "PAC FONT VALIDATION PROBE A"))
+        probe_fonts.append(
+            ("FpStd", embedded_font or build_standard_winansi_font(pdf), "PAC FONT VALIDATION PROBE")
+        )
 
         if force_font_matrix:
             matrix_specs = [
@@ -1618,7 +1760,7 @@ class ContrastEnhancer:
     Rebuilds a PDF as high-contrast page images.
     """
 
-    def create_high_contrast_pdf(self, input_pdf: Path, dpi: int = 220) -> Path:
+    def create_high_contrast_pdf(self, input_pdf: Path, dpi: int = 170) -> Path:
         try:
             import fitz  # PyMuPDF
             from PIL import Image, ImageOps
@@ -1646,7 +1788,7 @@ class ContrastEnhancer:
 
         temp_dir = Path(tempfile.gettempdir())
         tmp_path = temp_dir / f"{input_pdf.stem}_contrast_tmp.pdf"
-        dst.save(tmp_path.as_posix())
+        dst.save(tmp_path.as_posix(), deflate=True, garbage=3)
         dst.close()
         src.close()
         return tmp_path
@@ -1700,6 +1842,11 @@ class UniversalPDFTaggingAgent:
                 if (enhance_contrast or force_pac_checkpoints)
                 else None
             )
+            injected_font = (
+                pick_injected_text_font(pdf, heading_font)
+                if (enhance_contrast or force_pac_checkpoints or force_pac_font_check)
+                else heading_font
+            )
             total_pages = len(pdf.pages)
             blocks = self.artifact_classifier.classify(blocks, total_pages)
             blocks = self.reading_order_engine.sort(blocks)
@@ -1730,7 +1877,7 @@ class UniversalPDFTaggingAgent:
                 blocks=blocks,
                 alt_texts=alt_texts,
                 contrast_mode=enhance_contrast,
-                heading_font=heading_font,
+                heading_font=injected_font,
                 force_pac_font_check=force_pac_font_check,
             )
             self.bookmark_builder.apply(pdf=pdf, blocks=blocks)
@@ -1739,7 +1886,7 @@ class UniversalPDFTaggingAgent:
                 # later structural processing.
                 self.pac_forcer.apply(
                     pdf=pdf,
-                    embedded_font=heading_font,
+                    embedded_font=injected_font,
                     force_font_matrix=force_pac_font_matrix,
                     force_alt_checkpoints=force_pac_alt_checkpoints,
                 )
